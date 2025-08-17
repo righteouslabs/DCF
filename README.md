@@ -12,7 +12,7 @@ This library also makes possible comparisons to where the underlying entity has 
 
 Next steps: 
 - [ ] implement dynamic discount rate calculation
-- [ ] multivariable earnings growth rate calculations (as opposed to hard-coding)
+- [x] multivariable earnings growth rate calculations (as opposed to hard-coding)
 - [ ] EBITDA multiples for terminal value
 
 ### Dependencies

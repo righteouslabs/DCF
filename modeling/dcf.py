@@ -4,18 +4,27 @@ from decimal import Decimal
 from modeling.data import *
 
 
-def DCF(ticker, ev_statement, income_statement, balance_statement, cashflow_statement, discount_rate, forecast, earnings_growth_rate, cap_ex_growth_rate, perpetual_growth_rate):
+def DCF(ticker, ev_statement, income_statement, balance_statement, cashflow_statement, discount_rate, forecast, earnings_growth_rate, cap_ex_growth_rate, perpetual_growth_rate, variable_growth_rates=None):
     """
-    a very basic 2-stage DCF implemented for learning purposes.
-    see enterprise_value() for details on arguments. 
-
+    DCF model with support for variable year-by-year growth rates.
+    
     args:
-        see enterprise value for more info...
+        ticker: company ticker
+        ev_statement: enterprise value statement data
+        income_statement: income statement data
+        balance_statement: balance sheet data  
+        cashflow_statement: cash flow statement data
+        discount_rate: WACC discount rate
+        forecast: number of years to forecast
+        earnings_growth_rate: fallback constant earnings growth rate
+        cap_ex_growth_rate: fallback constant capex growth rate  
+        perpetual_growth_rate: terminal growth rate
+        variable_growth_rates: dict with year -> growth_rate mapping or list of growth rates
+                              e.g., {2025: -0.076, 2026: 0.305, 2027: 0.059, 2028: 0.049, 2029: 0.050}
+                              or [-0.076, 0.305, 0.059, 0.049, 0.050, 0.050, 0.050, 0.050, 0.050, 0.050]
 
     returns:
         dict: {'share price': __, 'enterprise_value': __, 'equity_value': __, 'date': __}
-        CURRENT DCF VALUATION. See historical_dcf to fetch a history. 
-
     """
     enterprise_val = enterprise_value(income_statement,
                                         cashflow_statement,
@@ -24,7 +33,8 @@ def DCF(ticker, ev_statement, income_statement, balance_statement, cashflow_stat
                                         discount_rate,
                                         earnings_growth_rate, 
                                         cap_ex_growth_rate, 
-                                        perpetual_growth_rate)
+                                        perpetual_growth_rate,
+                                        variable_growth_rates)
 
     equity_val, share_price = equity_value(enterprise_val,
                                            ev_statement)
@@ -122,30 +132,45 @@ def equity_value(enterprise_value, enterprise_value_statement):
 
     args:
         enterprise_value: (EV = market cap + total debt - cash), or total value
-        enterprise_value_statement: information on debt & cash
+        enterprise_value_statement: information on debt & cash (list or dict format)
     
     returns:
         equity_value: (enterprise value - debt + cash)
         share_price: equity value/shares outstanding
     """
-    equity_val = enterprise_value - enterprise_value_statement['+ Total Debt'] 
-    equity_val += enterprise_value_statement['- Cash & Cash Equivalents']
-    share_price = equity_val/float(enterprise_value_statement['Number of Shares'])
+    # Handle both old dict format and new FMP API list format
+    if isinstance(enterprise_value_statement, list):
+        # FMP API format - use most recent data
+        ev_data = enterprise_value_statement[0]
+        debt = ev_data['addTotalDebt']
+        cash = ev_data['minusCashAndCashEquivalents']
+        shares = ev_data['numberOfShares']
+    else:
+        # Original format
+        debt = enterprise_value_statement['+ Total Debt'] 
+        cash = enterprise_value_statement['- Cash & Cash Equivalents']
+        shares = enterprise_value_statement['Number of Shares']
+    
+    equity_val = enterprise_value - debt + cash
+    share_price = equity_val / float(shares)
 
-    return equity_val,  share_price
+    return equity_val, share_price
 
 
-def enterprise_value(income_statement, cashflow_statement, balance_statement, period, discount_rate, earnings_growth_rate, cap_ex_growth_rate, perpetual_growth_rate):
+def enterprise_value(income_statement, cashflow_statement, balance_statement, period, discount_rate, earnings_growth_rate, cap_ex_growth_rate, perpetual_growth_rate, variable_growth_rates=None):
     """
     Calculate enterprise value by NPV of explicit _period_ free cash flows + NPV of terminal value,
-    both discounted by W.A.C.C.
+    both discounted by W.A.C.C. Now supports variable year-by-year growth rates.
 
     args:
-        ticker: company for forecasting
+        income_statement: income statement data
+        cashflow_statement: cash flow statement data  
+        balance_statement: balance sheet data
         period: years into the future
-        earnings growth rate: assumed growth rate in earnings, YoY
-        cap_ex_growth_rate: assumed growth rate in cap_ex, YoY
+        earnings_growth_rate: fallback constant earnings growth rate, YoY
+        cap_ex_growth_rate: fallback constant cap_ex growth rate, YoY
         perpetual_growth_rate: assumed growth rate in perpetuity for terminal value, YoY
+        variable_growth_rates: dict with year -> growth_rate mapping or list of growth rates
 
     returns:
         enterprise value
@@ -163,30 +188,70 @@ def enterprise_value(income_statement, cashflow_statement, balance_statement, pe
     cap_ex = float(cashflow_statement[0]['Capital Expenditure'])
     discount = discount_rate
 
+    # Prepare growth rates for variable growth support
+    if variable_growth_rates is None:
+        # Use constant growth rates as before
+        growth_rates = [earnings_growth_rate] * period
+        cap_ex_growth_rates = [cap_ex_growth_rate] * period
+    elif isinstance(variable_growth_rates, dict):
+        # Convert dict to list based on years
+        base_year = int(income_statement[0]['date'][0:4])
+        growth_rates = []
+        cap_ex_growth_rates = []
+        for i in range(period):
+            year = base_year + i + 1
+            gr = variable_growth_rates.get(year, earnings_growth_rate)
+            growth_rates.append(gr)
+            cap_ex_growth_rates.append(gr)  # Use same rate for cap_ex
+    elif isinstance(variable_growth_rates, list):
+        # Use provided list, extend with constant rate if needed
+        growth_rates = variable_growth_rates.copy()
+        while len(growth_rates) < period:
+            growth_rates.append(earnings_growth_rate)
+        growth_rates = growth_rates[:period]  # Trim if too long
+        cap_ex_growth_rates = growth_rates.copy()  # Use same rates for cap_ex
+    else:
+        raise ValueError("variable_growth_rates must be dict, list, or None")
+
     flows = []
 
     # Now let's iterate through years to calculate FCF, starting with most recent year
-    print('Forecasting flows for {} years out, starting at {}.'.format(period, income_statement[0]['date']),
-         ('\n         DFCF   |    EBIT   |    D&A    |    CWC     |   CAP_EX   | '))
+    print('Forecasting flows for {} years out, starting at {}.'.format(period, income_statement[0]['date']))
+    print('Year   | Growth Rate |     DFCF    |    EBIT     |     D&A     |     CWC     |   CAP_EX    |')
+    print('-' * 88)
+    
+    # Store initial values for compound growth calculation
+    base_ebit = ebit
+    base_ncc = non_cash_charges
+    base_cwc = cwc
+    base_capex = cap_ex
+    
     for yr in range(1, period+1):    
+        # Get growth rate for this year
+        year_growth_rate = growth_rates[yr - 1]
+        year_capex_growth_rate = cap_ex_growth_rates[yr - 1]
 
-        # increment each value by growth rate
-        ebit = ebit * (1 + (yr * earnings_growth_rate))
-        non_cash_charges = non_cash_charges * (1 + (yr * earnings_growth_rate))
-        cwc = cwc * 0.7                             # TODO: evaluate this cwc rate? 0.1 annually?
-        cap_ex = cap_ex * (1 + (yr * cap_ex_growth_rate))         
+        # Apply variable growth rates (compound growth from base year)
+        if yr == 1:
+            ebit = base_ebit * (1 + year_growth_rate)
+            non_cash_charges = base_ncc * (1 + year_growth_rate)
+            cap_ex = base_capex * (1 + year_capex_growth_rate)
+        else:
+            # Compound growth from previous year
+            ebit = ebit * (1 + year_growth_rate)
+            non_cash_charges = non_cash_charges * (1 + year_growth_rate)
+            cap_ex = cap_ex * (1 + year_capex_growth_rate)
+        
+        cwc = cwc * 0.7  # TODO: evaluate this cwc rate? 0.1 annually?
 
         # discount by WACC
         flow = ulFCF(ebit, tax_rate, non_cash_charges, cwc, cap_ex)
         PV_flow = flow/((1 + discount)**yr)
         flows.append(PV_flow)
 
-        print(str(int(income_statement[0]['date'][0:4]) + yr) + '  ',
-              '%.2E' % Decimal(PV_flow) + ' | ',
-              '%.2E' % Decimal(ebit) + ' | ',
-              '%.2E' % Decimal(non_cash_charges) + ' | ',
-              '%.2E' % Decimal(cwc) + ' | ',
-              '%.2E' % Decimal(cap_ex) + ' | ')
+        forecast_year = int(income_statement[0]['date'][0:4]) + yr
+        print(f'{forecast_year} | {year_growth_rate:>9.1%} | {PV_flow:>11.2E} | {ebit:>11.2E} | '
+              f'{non_cash_charges:>11.2E} | {cwc:>11.2E} | {cap_ex:>11.2E} |')
 
     NPV_FCF = sum(flows)
     
