@@ -1,6 +1,12 @@
 import argparse, traceback
 import logging
 from decimal import Decimal
+from pathlib import Path
+import sys
+
+# Add project root to path for config access
+project_root = Path(__file__).parent.parent.parent.parent
+sys.path.insert(0, str(project_root / 'src'))
 
 from modeling.data import (
     get_EV_statement, 
@@ -8,6 +14,29 @@ from modeling.data import (
     get_cashflow_statement, 
     get_balance_statement
 )
+
+# Import configuration management
+try:
+    from config_manager import get_config
+    config = get_config()
+    DCF_CONFIG = config.forecasting.dcf
+except ImportError:
+    # Fallback to default values if config not available
+    class DCFConfig:
+        default_discount_rate = 0.10
+        working_capital_decay_rate = 0.7
+        risk_free_rate = 0.04
+        market_premium = 0.06
+        default_earnings_growth_rate = 0.05
+        default_capex_growth_rate = 0.045
+        terminal_value_method = "gordon_growth"
+        max_terminal_growth_rate = 0.04
+        min_terminal_growth_rate = 0.02
+        tax_rate_floor = 0.15
+        tax_rate_ceiling = 0.35
+        beta_defaults = {"default": 1.0}
+    
+    DCF_CONFIG = DCFConfig()
 
 # Setup DCF module logger
 logger = logging.getLogger(__name__)
@@ -121,17 +150,62 @@ def ulFCF(ebit, tax_rate, non_cash_charges, cwc, cap_ex):
     return ebit * (1-tax_rate) + non_cash_charges + cwc + cap_ex
 
 
-def get_discount_rate():
+def get_discount_rate(equity_beta=None, debt_to_equity=None, tax_rate=None, industry=None):
     """
-    Calculate the Weighted Average Cost of Capital (WACC) for our company.
-    Used for consideration of existing capital structure.
+    Calculate the Weighted Average Cost of Capital (WACC) for a company.
+    Uses industry defaults and CAPM when specific data is unavailable.
 
     args:
+        equity_beta: Company's equity beta (risk relative to market)
+        debt_to_equity: Debt-to-equity ratio for capital structure
+        tax_rate: Corporate tax rate for tax shield calculation
+        industry: Industry for beta defaults if equity_beta not provided
     
     returns:
-        W.A.C.C.
+        Calculated WACC (Weighted Average Cost of Capital)
     """
-    return .1 # TODO: implement 
+    # Use configured defaults
+    risk_free_rate = DCF_CONFIG.risk_free_rate
+    market_premium = DCF_CONFIG.market_premium
+    
+    # Determine beta
+    if equity_beta is None:
+        if industry and hasattr(DCF_CONFIG, 'beta_defaults'):
+            beta = DCF_CONFIG.beta_defaults.get(industry, DCF_CONFIG.beta_defaults.get('default', 1.0))
+        else:
+            beta = 1.0  # Market beta default
+        logger.debug(f"Using default beta {beta} for industry: {industry}")
+    else:
+        beta = equity_beta
+        logger.debug(f"Using provided beta: {beta}")
+    
+    # Calculate cost of equity using CAPM
+    cost_of_equity = risk_free_rate + beta * market_premium
+    
+    # If no capital structure info, return cost of equity as proxy
+    if debt_to_equity is None or tax_rate is None:
+        logger.debug(f"Using cost of equity {cost_of_equity:.3f} as WACC proxy (no capital structure data)")
+        return cost_of_equity
+    
+    # Calculate WACC with capital structure
+    # Cost of debt approximation (risk-free + spread based on leverage)
+    debt_spread = min(0.05, debt_to_equity * 0.02)  # Max 5% spread
+    cost_of_debt = risk_free_rate + debt_spread
+    
+    # WACC formula: E/V * Cost_of_Equity + D/V * Cost_of_Debt * (1 - Tax_Rate)
+    total_value = 1 + debt_to_equity  # E + D
+    equity_weight = 1 / total_value
+    debt_weight = debt_to_equity / total_value
+    
+    # Bound tax rate
+    tax_rate = max(DCF_CONFIG.tax_rate_floor, min(tax_rate, DCF_CONFIG.tax_rate_ceiling))
+    
+    wacc = (equity_weight * cost_of_equity + 
+            debt_weight * cost_of_debt * (1 - tax_rate))
+    
+    logger.debug(f"Calculated WACC: {wacc:.3f} (E/V: {equity_weight:.2f}, D/V: {debt_weight:.2f}, Tax: {tax_rate:.2f})")
+    
+    return wacc 
 
 
 def equity_value(enterprise_value, enterprise_value_statement):
@@ -198,7 +272,12 @@ def enterprise_value(income_statement, cashflow_statement, balance_statement, pe
 
     # Prepare growth rates for variable growth support
     if variable_growth_rates is None:
-        # Use constant growth rates as before
+        # Use constant growth rates from config or parameters
+        if earnings_growth_rate is None:
+            earnings_growth_rate = DCF_CONFIG.default_earnings_growth_rate
+        if cap_ex_growth_rate is None:
+            cap_ex_growth_rate = DCF_CONFIG.default_capex_growth_rate
+        
         growth_rates = [earnings_growth_rate] * period
         cap_ex_growth_rates = [cap_ex_growth_rate] * period
     elif isinstance(variable_growth_rates, dict):
@@ -250,7 +329,9 @@ def enterprise_value(income_statement, cashflow_statement, balance_statement, pe
             non_cash_charges = non_cash_charges * (1 + year_growth_rate)
             cap_ex = cap_ex * (1 + year_capex_growth_rate)
         
-        cwc = cwc * 0.7  # TODO: evaluate this cwc rate? 0.1 annually?
+        # Apply working capital decay rate from configuration
+        # This models the expectation that working capital changes moderate over time
+        cwc = cwc * DCF_CONFIG.working_capital_decay_rate  # Configurable decay rate
 
         # discount by WACC
         flow = ulFCF(ebit, tax_rate, non_cash_charges, cwc, cap_ex)

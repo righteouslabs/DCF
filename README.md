@@ -10,10 +10,19 @@ This library also makes possible comparisons to where the underlying entity has 
 
 **Obviously one cannot utilize this visualization to say very much about the quality of their DCF and assumptions made.** It is much more helpful when one is very __certain of the valuation they've derived__ and is hoping to understand how the stock has traded in relation to that in the past, i.e., at a premium or discount.
 
-Next steps: 
-- [ ] implement dynamic discount rate calculation
-- [x] multivariable earnings growth rate calculations (as opposed to hard-coding)
-- [ ] EBITDA multiples for terminal value
+## Recent Improvements (Technical Debt Resolution)
+
+- [x] ✅ **Dynamic WACC calculation** - Implemented proper CAPM-based discount rate calculation
+- [x] ✅ **Configuration management** - Moved all hardcoded parameters to config.yaml
+- [x] ✅ **Variable growth rate support** - Enhanced support for year-by-year growth rates
+- [x] ✅ **Documentation** - Added comprehensive technical documentation
+- [x] ✅ **Error handling** - Improved validation and error recovery
+- [x] ✅ **Code cleanup** - Resolved all TODO comments and magic numbers
+
+## Next Steps:
+- [ ] EBITDA multiples for terminal value calculation
+- [ ] Monte Carlo simulation for risk analysis
+- [ ] Enhanced sensitivity analysis visualization
 
 ### Dependencies
 

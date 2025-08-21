@@ -63,7 +63,8 @@ def get_EV_statement(ticker, period='annual', apikey=''):
     return get_jsonparsed_data(url)
 
 
-#! TODO: maybe combine these with argument flag for which statement, seems pretty redundant tbh
+# Note: These functions could be consolidated with a statement_type parameter,
+# but kept separate for clarity and backward compatibility with existing DCF code
 def get_income_statement(ticker, period='annual', apikey=''):
     """
     Fetch income statement.

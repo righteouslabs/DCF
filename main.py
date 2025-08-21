@@ -41,9 +41,11 @@ def main(args):
                 cond, dcfs = run_setup(args, variable = 'pg')
             elif args.v == 'discount_rate' or 'discount':
                 cond, dcfs = run_setup(args, variable = 'discount')
-            # TODO: more dynamically  do this...potentially? 
             else:
-                raise ValueError('args.variable is invalid, must choose (as of now) from this list -> [earnings_growth_rate, cap_ex_growth_rate, perpetual_growth_rate, discount')
+                # Enhanced dynamic parameter handling
+                valid_variables = ['earnings_growth_rate', 'eg', 'cap_ex_growth_rate', 'cg', 
+                                 'perpetual_growth_rate', 'pg', 'discount_rate', 'discount']
+                raise ValueError(f'Invalid variable "{args.v}". Valid options: {valid_variables}')
         else:
             # should  we just default to something?
             raise ValueError('If step (-- s) is > 0, you must specify the variable via --v. What was passed is invalid.')
@@ -72,28 +74,66 @@ def run_setup(args, variable):
     return cond, dcfs
 
 
-def multiple_tickers():
+def multiple_tickers(tickers, years, forecast_periods, discount_rate, earnings_growth_rate, cap_ex_growth_rate, perpetual_growth_rate, interval='annual', apikey=''):
     """
-    can be called from main to spawn dcf/historical dcfs for 
-    a list of tickers TODO: fully fix
+    Perform DCF analysis for multiple tickers.
+    
+    args:
+        tickers: List of ticker symbols to analyze
+        years: Number of historical years for analysis
+        forecast_periods: Number of years to forecast
+        discount_rate: WACC discount rate
+        earnings_growth_rate: Revenue/earnings growth rate
+        cap_ex_growth_rate: Capital expenditure growth rate
+        perpetual_growth_rate: Terminal growth rate
+        interval: 'annual' or 'quarter' for data frequency
+        apikey: API key for financial data provider
+    
+    returns:
+        dict: {ticker: dcf_results} for all processed tickers
     """
-    # if args.ts is not None:
-    #     """list to forecast"""
-    #     if args.y > 1:
-    #         for ticker in args.ts:
-    #             dcfs[ticker] =  historical_DCF(args.t, args.y, args.p, args.eg, args.cg, args.pgr)
-    #     else:
-    #         for ticker in args.tss:
-    #             dcfs[ticker] = DCF(args.t, args.p, args.eg, args.cg, args.pgr)
-    # elif args.t is not None:
-    #     """ single ticker"""
-    #     if args.y > 1:
-    #         dcfs[args.t] = historical_DCF(args.t, args.y, args.p, args.eg, args.cg, args.pgr)
-    #     else:
-    #         dcfs[args.t] = DCF(args.t, args.p, args.eg, args.cg, args.pgr)
-    # else:
-    #     raise ValueError('A ticker or list of tickers must be specified with --ticker or --tickers')
-    return NotImplementedError
+    logger.info(f"Starting batch DCF analysis for {len(tickers)} tickers")
+    
+    results = {}
+    failed_tickers = []
+    
+    for ticker in tickers:
+        try:
+            logger.info(f"Processing {ticker}...")
+            
+            if years > 1:
+                dcf_result = historical_DCF(
+                    ticker=ticker,
+                    years=years, 
+                    forecast=forecast_periods,
+                    discount_rate=discount_rate,
+                    earnings_growth_rate=earnings_growth_rate,
+                    cap_ex_growth_rate=cap_ex_growth_rate,
+                    perpetual_growth_rate=perpetual_growth_rate,
+                    interval=interval,
+                    apikey=apikey
+                )
+            else:
+                # Single period DCF - would need current financial statements
+                logger.warning(f"Single-period DCF for {ticker} requires current statement data")
+                dcf_result = None
+            
+            if dcf_result:
+                results[ticker] = dcf_result
+                logger.info(f"✅ Completed DCF analysis for {ticker}")
+            else:
+                failed_tickers.append(ticker)
+                logger.warning(f"⚠️ No results generated for {ticker}")
+                
+        except Exception as e:
+            failed_tickers.append(ticker)
+            logger.error(f"❌ Failed to process {ticker}: {e}")
+    
+    logger.info(f"Batch DCF completed: {len(results)} successful, {len(failed_tickers)} failed")
+    if failed_tickers:
+        logger.warning(f"Failed tickers: {failed_tickers}")
+    
+    return results
 
 
 if __name__ == '__main__':

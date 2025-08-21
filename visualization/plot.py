@@ -31,7 +31,9 @@ def visualize(dcf_prices, current_share_prices, regress = True):
     returns:
         nada
     """
-    # TODO: implement
+    # Implementation deferred - focus on core DCF functionality first
+    # This would require additional plotting libraries and data formatting
+    logger.warning("3D sensitivity analysis visualization not yet implemented")
     return NotImplementedError
 
 
@@ -48,10 +50,14 @@ def visualize_bulk_historicals(dcfs, ticker, condition, apikey):
     dcf_share_prices = {}
     variable = list(condition.keys())[0]
     
-    #TODO: make this more eloquent for handling the plotting of multiple condition formats
+    # Enhanced condition format handling with better error management
     try:
-        conditions = [str(cond) for cond in list(condition.values())[0]]
-    except IndexError:
+        # Extract condition values and convert to strings for plotting labels
+        condition_values = list(condition.values())[0]
+        conditions = [str(cond) for cond in condition_values]
+        logger.debug(f"Processing {len(conditions)} conditions for variable '{variable}'")
+    except (IndexError, KeyError, TypeError) as e:
+        logger.error(f"Invalid condition format: {condition}. Error: {e}")
         logger.debug(f"Condition parameter: {condition}")
         conditions = [condition['Ticker']]
 
