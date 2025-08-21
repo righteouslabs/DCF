@@ -18,6 +18,11 @@ import os
 from modeling.dcf import historical_DCF
 from visualization.plot import visualize_bulk_historicals
 from visualization.printouts import prettyprint
+# Logging setup
+from logging_config import get_logger, log_progress
+
+logger = get_logger(__name__)
+
 
 
 def main(args):
