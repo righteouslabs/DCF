@@ -1,4 +1,5 @@
 import argparse, traceback
+import logging
 from decimal import Decimal
 
 from modeling.data import (
@@ -7,6 +8,9 @@ from modeling.data import (
     get_cashflow_statement, 
     get_balance_statement
 )
+
+# Setup DCF module logger
+logger = logging.getLogger(__name__)
 
 
 def DCF(ticker, ev_statement, income_statement, balance_statement, cashflow_statement, discount_rate, forecast, earnings_growth_rate, cap_ex_growth_rate, perpetual_growth_rate, variable_growth_rates=None):
@@ -44,10 +48,10 @@ def DCF(ticker, ev_statement, income_statement, balance_statement, cashflow_stat
     equity_val, share_price = equity_value(enterprise_val,
                                            ev_statement)
 
-    print('\nEnterprise Value for {}: ${}.'.format(ticker, '%.2E' % Decimal(str(enterprise_val))), 
-              '\nEquity Value for {}: ${}.'.format(ticker, '%.2E' % Decimal(str(equity_val))),
-           '\nPer share value for {}: ${}.\n'.format(ticker, '%.2E' % Decimal(str(share_price))),
-            )
+    logger.info(f"DCF Results for {ticker}: "
+                f"Enterprise Value: ${enterprise_val:.2E}, "
+                f"Equity Value: ${equity_val:.2E}, "
+                f"Share Price: ${share_price:.2E}")
 
     return {
         'date': income_statement[0]['date'],       # statement date used
@@ -93,10 +97,9 @@ def historical_DCF(ticker, years, forecast, discount_rate, earnings_growth_rate,
                     cap_ex_growth_rate, 
                     perpetual_growth_rate)
         except (Exception, IndexError) as e:
-            print(traceback.format_exc())
-            print('Interval {} unavailable, no historical statement.'.format(interval)) # catch
+            logger.warning(f"Interval {interval} unavailable for {ticker}: {traceback.format_exc()}")
         else: dcfs[dcf['date']] = dcf 
-        print('-'*60)
+        logger.debug("-" * 60)
     
     return dcfs
 
@@ -221,9 +224,9 @@ def enterprise_value(income_statement, cashflow_statement, balance_statement, pe
     flows = []
 
     # Now let's iterate through years to calculate FCF, starting with most recent year
-    print('Forecasting flows for {} years out, starting at {}.'.format(period, income_statement[0]['date']))
-    print('Year   | Growth Rate |     DFCF    |    EBIT     |     D&A     |     CWC     |   CAP_EX    |')
-    print('-' * 88)
+    logger.info(f'Forecasting flows for {period} years out, starting at {income_statement[0]["date"]}')
+    logger.debug('Year   | Growth Rate |     DFCF    |    EBIT     |     D&A     |     CWC     |   CAP_EX    |')
+    logger.debug('-' * 88)
     
     # Store initial values for compound growth calculation
     base_ebit = ebit
@@ -255,8 +258,8 @@ def enterprise_value(income_statement, cashflow_statement, balance_statement, pe
         flows.append(PV_flow)
 
         forecast_year = int(income_statement[0]['date'][0:4]) + yr
-        print(f'{forecast_year} | {year_growth_rate:>9.1%} | {PV_flow:>11.2E} | {ebit:>11.2E} | '
-              f'{non_cash_charges:>11.2E} | {cwc:>11.2E} | {cap_ex:>11.2E} |')
+        logger.debug(f'{forecast_year} | {year_growth_rate:>9.1%} | {PV_flow:>11.2E} | {ebit:>11.2E} | '
+                    f'{non_cash_charges:>11.2E} | {cwc:>11.2E} | {cap_ex:>11.2E} |')
 
     NPV_FCF = sum(flows)
     

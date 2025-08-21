@@ -4,12 +4,15 @@ in terms of enabling quick interpretation of DCF related data.
 """
 
 import sys
+import logging
 
 import matplotlib.pyplot as plt
 import seaborn as sns
 
 sys.path.append('..')
 from modeling.data import get_historical_share_prices
+
+logger = logging.getLogger(__name__)
 
 sns.set()
 sns.set_context('paper')
@@ -49,7 +52,7 @@ def visualize_bulk_historicals(dcfs, ticker, condition, apikey):
     try:
         conditions = [str(cond) for cond in list(condition.values())[0]]
     except IndexError:
-        print(condition)
+        logger.debug(f"Condition parameter: {condition}")
         conditions = [condition['Ticker']]
 
     for cond in conditions:
