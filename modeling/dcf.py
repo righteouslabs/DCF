@@ -1,7 +1,12 @@
 import argparse, traceback
 from decimal import Decimal
 
-from modeling.data import *
+from modeling.data import (
+    get_EV_statement, 
+    get_income_statement, 
+    get_cashflow_statement, 
+    get_balance_statement
+)
 
 
 def DCF(ticker, ev_statement, income_statement, balance_statement, cashflow_statement, discount_rate, forecast, earnings_growth_rate, cap_ex_growth_rate, perpetual_growth_rate, variable_growth_rates=None):

@@ -9,7 +9,7 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 
 sys.path.append('..')
-from modeling.data import *
+from modeling.data import get_historical_share_prices
 
 sns.set()
 sns.set_context('paper')

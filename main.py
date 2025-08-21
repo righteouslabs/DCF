@@ -15,10 +15,9 @@ future goals:
 import argparse
 import os
 
-from modeling.data import *
-from modeling.dcf import *
-from visualization.plot import *
-from visualization.printouts import *
+from modeling.dcf import historical_DCF
+from visualization.plot import visualize_bulk_historicals
+from visualization.printouts import prettyprint
 
 
 def main(args):
