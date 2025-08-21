@@ -2,17 +2,38 @@
 Utilizing financialmodelingprep.com for their free-endpoint API
 to gather company financials.
 
+CONSOLIDATED DATA ACCESS: This module now uses the consolidated data access layer
+to replace direct urllib calls with unified error handling, caching, and rate limiting.
+
 NOTE: Some code taken directly from their documentation. See: https://financialmodelingprep.com/developer/docs/. 
 """
 
-from urllib.request import urlopen
 import json, traceback
 import logging
 
 logger = logging.getLogger(__name__)
 
+# Use consolidated data access instead of direct urllib
+try:
+    from consolidated_data_access import get_data_manager
+    _use_consolidated_access = True
+    logger.info("✅ Using consolidated data access for DCF module")
+except ImportError:
+    # Fallback to legacy urllib if consolidated access not available
+    from urllib.request import urlopen
+    _use_consolidated_access = False
+    logger.warning("⚠️ Consolidated data access not available, using legacy urllib")
+
 
 def get_api_url(requested_data, ticker, period, apikey):
+    """
+    Construct FMP API URL with proper formatting.
+    
+    This function now works with the consolidated data access layer
+    for consistent URL construction across the application.
+    """
+    ticker = ticker.upper()  # Ensure consistent ticker format
+    
     if period == 'annual':
         url = 'https://financialmodelingprep.com/api/v3/{requested_data}/{ticker}?apikey={apikey}'.format(
             requested_data=requested_data, ticker=ticker, apikey=apikey)
@@ -26,7 +47,10 @@ def get_api_url(requested_data, ticker, period, apikey):
 
 def get_jsonparsed_data(url):
     """
-    Fetch url, return parsed json. 
+    Fetch url, return parsed json using consolidated data access.
+    
+    CONSOLIDATED: Now uses ConsolidatedDataAccessManager for unified
+    error handling, caching, and rate limiting instead of direct urllib.
 
     args:
         url: the url to fetch.
@@ -34,20 +58,31 @@ def get_jsonparsed_data(url):
     returns:
         parsed json
     """
-    try: response = urlopen(url)
-    except Exception as e:
-        logger.error(f"Error retrieving {url}: {e}")
+    if _use_consolidated_access:
+        # Use consolidated data access with unified error handling and caching
+        try:
+            manager = get_data_manager()
+            return manager.get_jsonparsed_data(url)
+        except Exception as e:
+            logger.error(f"Consolidated data access failed for {url}: {e}")
+            raise
+    else:
+        # Fallback to legacy urllib implementation
         try: 
-            error_detail = e.read().decode()
-            logger.error(f"API Error details: {error_detail}")
-        except: pass
-        raise
-    data = response.read().decode('utf-8')
-    json_data = json.loads(data)
-    if "Error Message" in json_data:
-        raise ValueError("Error while requesting data from '{url}'. Error Message: '{err_msg}'.".format(
-            url=url, err_msg=json_data["Error Message"]))
-    return json_data
+            response = urlopen(url)
+        except Exception as e:
+            logger.error(f"Error retrieving {url}: {e}")
+            try: 
+                error_detail = e.read().decode()
+                logger.error(f"API Error details: {error_detail}")
+            except: pass
+            raise
+        data = response.read().decode('utf-8')
+        json_data = json.loads(data)
+        if "Error Message" in json_data:
+            raise ValueError("Error while requesting data from '{url}'. Error Message: '{err_msg}'.".format(
+                url=url, err_msg=json_data["Error Message"]))
+        return json_data
 
 
 def get_EV_statement(ticker, period='annual', apikey=''):
