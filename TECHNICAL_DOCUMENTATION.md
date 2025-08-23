@@ -206,10 +206,11 @@ dcf_result = DCF(
 )
 ```
 
-### Batch Processing
+### Individual Ticker Processing
 ```python
-results = multiple_tickers(
-    tickers=["AAPL", "MSFT", "GOOGL"],
+# Process one ticker at a time for maximum reliability
+dcf_result = DCF(
+    ticker="AAPL",
     years=5,
     forecast_periods=10,
     discount_rate=0.10,
@@ -217,6 +218,9 @@ results = multiple_tickers(
     cap_ex_growth_rate=0.045,
     perpetual_growth_rate=0.025
 )
+
+# External orchestration handles multiple tickers
+# Each ticker processed independently via Kubernetes/messaging queues
 ```
 
 ## Return Format
@@ -260,9 +264,9 @@ Follows the pipeline's error handling patterns with graceful degradation and det
 
 ### Integration Tests Needed
 1. **Full DCF Workflow**: End-to-end calculation
-2. **Batch Processing**: Multiple ticker handling
+2. **Individual Processing**: Single ticker handling
 3. **Error Scenarios**: Missing data handling
-4. **Performance**: Large dataset processing
+4. **Performance**: Serial processing efficiency
 
 ## Migration Notes
 
