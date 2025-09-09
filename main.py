@@ -15,7 +15,7 @@ future goals:
 import argparse
 import os
 
-from modeling.dcf import historical_DCF
+from modeling.dcf import historical_DCF, enhanced_DCF_with_trends
 from visualization.plot import visualize_bulk_historicals
 from visualization.printouts import prettyprint
 # Logging setup
@@ -27,11 +27,16 @@ logger = get_logger(__name__)
 
 def main(args):
     """
-    although the if statements are less than desirable, it allows rapid exploration of 
-    historical or present DCF values for either a single or list of tickers.
+    Run DCF analysis with trend analysis and comprehensive output.
+    Uses enhanced DCF with fmpsdk data access and dynamic growth rates.
     """
+    import json
+    
+    ticker = args.t
+    logger.info(f"Starting DCF analysis for {ticker}")
 
     if args.s > 0:
+        # Sensitivity analysis mode
         if args.v is not None:
             if args.v == 'eg' or 'earnings_growth_rate':
                 cond, dcfs = run_setup(args, variable = 'eg')
@@ -42,21 +47,85 @@ def main(args):
             elif args.v == 'discount_rate' or 'discount':
                 cond, dcfs = run_setup(args, variable = 'discount')
             else:
-                # Enhanced dynamic parameter handling
                 valid_variables = ['earnings_growth_rate', 'eg', 'cap_ex_growth_rate', 'cg', 
                                  'perpetual_growth_rate', 'pg', 'discount_rate', 'discount']
                 raise ValueError(f'Invalid variable "{args.v}". Valid options: {valid_variables}')
         else:
-            # should  we just default to something?
-            raise ValueError('If step (-- s) is > 0, you must specify the variable via --v. What was passed is invalid.')
+            raise ValueError('If step (-- s) is > 0, you must specify the variable via --v.')
+            
+        # Use visualization for sensitivity analysis
+        if args.y > 1:
+            visualize_bulk_historicals(dcfs, ticker, cond, args.apikey)
+        else:
+            prettyprint(dcfs, args.y)
     else:
-        cond, dcfs = {'Ticker': [args.t]}, {}
-        dcfs[args.t] = historical_DCF(args.t, args.y, args.p, args.d, args.eg, args.cg, args.pg, args.i, args.apikey)
+        # Standard DCF analysis with trend analysis
+        try:
+            result = enhanced_DCF_with_trends(
+                ticker=ticker,
+                years_back=args.years_back,
+                forecast_years=args.p,
+                discount_rate=args.d if args.d != 0.1 else None,  # Use dynamic WACC if default
+                perpetual_growth_rate=args.pg,
+                apikey=args.apikey
+            )
+            
+            if 'error' in result:
+                logger.error(f"Analysis failed: {result['error']}")
+                return
+            
+            # Display results
+            _display_results(result)
+            
+            # Save to JSON if requested
+            if args.output_json:
+                with open(args.output_json, 'w') as f:
+                    json.dump(result, f, indent=2, default=str)
+                logger.info(f"Results saved to {args.output_json}")
+                
+        except Exception as e:
+            logger.error(f"DCF analysis failed: {e}")
+            raise
 
-    if args.y > 1: # can't graph single timepoint very well....
-        visualize_bulk_historicals(dcfs, args.t, cond, args.apikey)
-    else:
-        prettyprint(dcfs, args.y)
+
+def _display_results(result: dict):
+    """Display DCF analysis results using structured logging"""
+    ticker = result['ticker']
+    dcf_val = result.get('dcf_valuation', {})
+    trends = result.get('trend_analysis', {})
+    enhanced = result.get('enhanced_metrics', {})
+    
+    logger.info("="*80)
+    logger.info(f"DCF ANALYSIS RESULTS FOR {ticker}")
+    logger.info("="*80)
+    
+    # Key Valuation Results
+    logger.info("📊 VALUATION SUMMARY:")
+    logger.info(f"   • Intrinsic Value per Share: ${enhanced.get('intrinsic_value', 0):.2f}")
+    logger.info(f"   • Enterprise Value: ${enhanced.get('enterprise_value', 0):,.0f}")
+    logger.info(f"   • Equity Value: ${enhanced.get('equity_value', 0):,.0f}")
+    
+    # Growth Analysis
+    logger.info("📈 GROWTH ANALYSIS:")
+    logger.info(f"   • Revenue CAGR: {enhanced.get('revenue_cagr', 0):.1%}")
+    logger.info(f"   • EBITDA CAGR: {enhanced.get('ebitda_cagr', 0):.1%}")
+    logger.info(f"   • FCFE CAGR: {enhanced.get('fcfe_cagr', 0):.1%}")
+    
+    # DCF Details  
+    logger.info("💰 DCF PARAMETERS:")
+    logger.info(f"   • Discount Rate (WACC): {result.get('discount_rate', 0):.1%}")
+    logger.info(f"   • Terminal Growth Rate: {result.get('terminal_growth_rate', 0):.1%}")
+    logger.info(f"   • Years Analyzed: {result.get('years_analyzed', 0)}")
+    logger.info(f"   • Forecast Years: {result.get('forecast_years', 0)}")
+    
+    # Data Source
+    logger.info("📋 DATA:")
+    logger.info(f"   • Source: {result.get('data_source', 'N/A')}")
+    logger.info(f"   • Analysis Date: {result.get('analysis_date', 'N/A')}")
+    
+    logger.info("="*80)
+    logger.info("Analysis complete!")
+    logger.info("="*80)
 
 
 def run_setup(args, variable):
@@ -151,6 +220,10 @@ if __name__ == '__main__':
     parser.add_argument('--cg', '--cap_ex_growth_rate', help = 'growth in cap_ex, YoY', type = float, default = 0.045)
     parser.add_argument('--pg', '--perpetual_growth_rate', help = 'for perpetuity growth terminal value', type = float, default = 0.05)
     parser.add_argument('--apikey', help='API key for financialmodelingprep.com', default=os.environ.get('APIKEY'))
+    
+    # Analysis options
+    parser.add_argument('--years_back', type=int, default=10, help='Years of historical data for trend analysis')
+    parser.add_argument('--output_json', help='Save results to JSON file')
 
     args = parser.parse_args()
     main(args)

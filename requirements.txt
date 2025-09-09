@@ -1,0 +1,11 @@
+# Financial Modeling Prep SDK
+# Source: https://github.com/daxm/fmpsdk
+fmpsdk>=20250102.0
+
+# For loading environment variables from a .env file
+# Source: https://github.com/theskumar/python-dotenv
+python-dotenv>=1.0.0
+
+# Box helps with dict to object conversion
+# Source: https://github.com/cdgriffith/Box
+python-box>=6.0.1
