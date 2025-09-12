@@ -309,12 +309,12 @@ class FMPClient:
     
     def _extract_report_columns(self, income_statements, balance_sheets, cash_flows, 
                               key_metrics, financial_ratios, enterprise_values) -> Dict[str, List[Dict]]:
-        """Extract specific columns matching the reference reports"""
+        """Store complete FMP data organized by year with minimal transformation"""
         
-        # Combine data by year
+        # Organize complete FMP data by year with minimal processing
         years_data = {}
         
-        # Process each year from income statements
+        # Store complete income statements by year
         for stmt in income_statements:
             year = stmt.get('calendarYear')
             if not year:
@@ -323,97 +323,88 @@ class FMPClient:
             if year not in years_data:
                 years_data[year] = {
                     'year': year,
-                    'date': stmt.get('date'),
-                    'period': stmt.get('period')
+                    'complete_fmp_data': {}  # Store all FMP data here
                 }
             
-            # Extract revenue, EBITDA calculations
-            years_data[year].update({
-                'revenue': stmt.get('revenue'),
-                'operating_income': stmt.get('operatingIncome'),
-                'depreciation_amortization': stmt.get('depreciationAndAmortization', 0),
-                'shares_outstanding': stmt.get('weightedAverageShsOut'),
-                'eps': stmt.get('eps')
-            })
+            # Store complete income statement data
+            years_data[year]['complete_fmp_data']['income_statement'] = stmt
             
-            # Calculate EBITDA
+            # Only add essential computed fields for backward compatibility
+            years_data[year]['currency'] = stmt.get('reportedCurrency', 'USD')
+            years_data[year]['revenue'] = stmt.get('revenue')
+            years_data[year]['shares_outstanding'] = stmt.get('weightedAverageShsOut')
+            
+            # Calculate EBITDA (commonly needed metric)
             if stmt.get('operatingIncome') and stmt.get('depreciationAndAmortization'):
                 years_data[year]['ebitda'] = stmt.get('operatingIncome') + stmt.get('depreciationAndAmortization')
-        
-        # Add balance sheet data
+
+        # Store complete balance sheet data
         for stmt in balance_sheets:
             year = stmt.get('calendarYear')
             if year in years_data:
-                years_data[year].update({
-                    'total_debt': stmt.get('totalDebt'),
-                    'cash_and_equivalents': stmt.get('cashAndCashEquivalents'),
-                    'total_assets': stmt.get('totalAssets'),
-                    'shareholders_equity': stmt.get('totalStockholdersEquity')
-                })
+                # Store complete balance sheet data
+                years_data[year]['complete_fmp_data']['balance_sheet'] = stmt
                 
-                # Calculate net cash
-                if stmt.get('cashAndCashEquivalents') and stmt.get('totalDebt'):
-                    years_data[year]['net_cash'] = stmt.get('cashAndCashEquivalents') - stmt.get('totalDebt')
-        
-        # Add cash flow data
+                # Add commonly used fields for backward compatibility
+                years_data[year]['debt'] = stmt.get('totalDebt')
+                years_data[year]['net_cash'] = (stmt.get('cashAndCashEquivalents', 0) - stmt.get('totalDebt', 0)) if stmt.get('cashAndCashEquivalents') and stmt.get('totalDebt') else None
+
+        # Store complete cash flow data
         for stmt in cash_flows:
             year = stmt.get('calendarYear')
             if year in years_data:
-                years_data[year].update({
-                    'operating_cash_flow': stmt.get('operatingCashFlow'),
-                    'capital_expenditures': stmt.get('capitalExpenditure', 0),
-                    'free_cash_flow': stmt.get('freeCashFlow'),
-                    'dividends_paid': stmt.get('dividendsPaid')
-                })
+                # Store complete cash flow data
+                years_data[year]['complete_fmp_data']['cash_flow'] = stmt
                 
-                # Calculate FCFE (Free Cash Flow to Equity)
-                if stmt.get('freeCashFlow') and stmt.get('dividendsPaid'):
-                    years_data[year]['fcfe'] = stmt.get('freeCashFlow') - abs(stmt.get('dividendsPaid', 0))
-                elif stmt.get('freeCashFlow'):
-                    years_data[year]['fcfe'] = stmt.get('freeCashFlow')
-        
-        # Add key metrics
+                # Add commonly used fields for backward compatibility
+                years_data[year]['capex'] = abs(stmt.get('capitalExpenditure', 0))  # Make positive
+                years_data[year]['fcfe'] = stmt.get('freeCashFlow', 0)
+                
+                # Calculate FCF per share if we have shares outstanding
+                if stmt.get('freeCashFlow') and years_data[year].get('shares_outstanding'):
+                    years_data[year]['fcf_per_share'] = stmt.get('freeCashFlow') / years_data[year]['shares_outstanding']
+
+        # Store complete key metrics
         for metrics in key_metrics:
             year = metrics.get('calendarYear')
             if year in years_data:
-                years_data[year].update({
-                    'market_cap': metrics.get('marketCap'),
-                    'enterprise_value': metrics.get('enterpriseValue'),
-                    'pe_ratio': metrics.get('peRatio'),
-                    'ev_to_revenue': metrics.get('evToRevenue'),
-                    'ev_to_ebitda': metrics.get('enterpriseValueOverEBITDA'),
-                    'price_per_share': metrics.get('stockPrice')
-                })
+                # Store complete key metrics data
+                years_data[year]['complete_fmp_data']['key_metrics'] = metrics
+                
+                # Add commonly used fields for backward compatibility
+                years_data[year]['enterprise_value'] = metrics.get('enterpriseValue')
+                years_data[year]['ev_ebitda_ratio'] = metrics.get('enterpriseValueOverEBITDA')
+
+        # Store complete enterprise values (including historical stock prices)
+        for ev in enterprise_values:
+            year = ev.get('date', '')[:4]  # Extract year from date (YYYY-MM-DD format)
+            if year in years_data:
+                # Store complete enterprise values data
+                years_data[year]['complete_fmp_data']['enterprise_values'] = ev
+                
+                # Add critical fields for backward compatibility
+                years_data[year]['stock_price'] = ev.get('stockPrice')  # Historical stock price!
+                years_data[year]['market_cap'] = ev.get('marketCapitalization')
         
-        # Add financial ratios
+        # Store complete financial ratios
         for ratios in financial_ratios:
             year = ratios.get('calendarYear')
             if year in years_data:
-                years_data[year].update({
-                    'debt_to_equity': ratios.get('debtEquityRatio'),
-                    'return_on_assets': ratios.get('returnOnAssets'),
-                    'return_on_equity': ratios.get('returnOnEquity'),
-                    'current_ratio': ratios.get('currentRatio')
-                })
-        
-        # Calculate additional metrics
+                # Store complete financial ratios data
+                years_data[year]['complete_fmp_data']['financial_ratios'] = ratios
+                
+                # Add commonly used ratios for backward compatibility
+                years_data[year]['ebitda_debt_ratio'] = ratios.get('debtEquityRatio')
+                years_data[year]['roa_ebitda_ratio'] = ratios.get('returnOnAssets')
+
+        # Calculate only essential derived metrics (most calculations can now use complete FMP data directly)
         for year, data in years_data.items():
-            # FCF per share
-            if data.get('free_cash_flow') and data.get('shares_outstanding'):
-                data['fcf_per_share'] = data['free_cash_flow'] / data['shares_outstanding']
-            
-            # FCFE Yield
-            if data.get('fcfe') and data.get('market_cap'):
+            # FCFE Yield (commonly needed for analysis)
+            if data.get('fcfe') and data.get('market_cap') and data['market_cap'] > 0:
                 data['fcfe_yield'] = data['fcfe'] / data['market_cap']
             
-            # EBITDA to Debt ratio
-            if data.get('ebitda') and data.get('total_debt') and data['total_debt'] > 0:
-                data['ebitda_debt_ratio'] = data['ebitda'] / data['total_debt']
-            
-            # ROA/EBITDA (unusual ratio, but matching report)
-            if data.get('return_on_assets') and data.get('ebitda') and data.get('total_assets'):
-                ebitda_margin = data['ebitda'] / data.get('revenue', 1) if data.get('revenue') else 0
-                data['roa_ebitda_ratio'] = data.get('return_on_assets', 0) / ebitda_margin if ebitda_margin else 0
+            # Store complete data reference for easy access
+            data['has_complete_fmp_data'] = bool(data.get('complete_fmp_data'))
         
         return {
             "yearly_data": list(years_data.values()),

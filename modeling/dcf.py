@@ -708,7 +708,43 @@ def enhanced_DCF_with_trends(
             variable_growth_rates=variable_growth_rates,
         )
 
-        # Step 6: Generate comprehensive output
+        # Step 6: Calculate IRR based on DCF results
+        current_price = dcf_result.get("share_price", 0)
+        enterprise_value = dcf_result.get("enterprise_value", 0)
+        equity_value = dcf_result.get("equity_value", 0)
+        
+        # Calculate IRR using projected cash flows
+        irr = 0
+        npv = 0
+        try:
+            if current_price > 0 and enterprise_value > 0:
+                # Estimate annual free cash flows based on enterprise value and growth
+                base_fcf = enterprise_value * discount_rate  # Rough estimate of current FCF
+                
+                # Project cash flows using variable growth rates
+                projected_cash_flows = []
+                for i, growth_rate in enumerate(variable_growth_rates):
+                    year_fcf = base_fcf * (1 + growth_rate) ** (i + 1)
+                    projected_cash_flows.append(year_fcf)
+                
+                # Terminal value based on final year FCF and terminal growth
+                terminal_fcf = projected_cash_flows[-1] * (1 + perpetual_growth_rate)
+                terminal_value = terminal_fcf / (discount_rate - perpetual_growth_rate)
+                
+                # Calculate IRR
+                irr = calculate_irr(current_price * trends.get("base_shares", 1), projected_cash_flows, terminal_value)
+                
+                # Calculate NPV (positive means undervalued)
+                npv = sum(cf / (1 + discount_rate) ** (i + 1) for i, cf in enumerate(projected_cash_flows))
+                npv += terminal_value / (1 + discount_rate) ** forecast_years
+                npv -= current_price * trends.get("base_shares", 1)
+                
+        except (ValueError, ZeroDivisionError, OverflowError) as e:
+            logger.debug(f"IRR calculation failed: {e}")
+            irr = discount_rate  # Fallback to discount rate
+            npv = 0
+        
+        # Step 7: Generate comprehensive output
         return {
             "ticker": ticker,
             "analysis_date": datetime.now().isoformat(),
@@ -718,8 +754,14 @@ def enhanced_DCF_with_trends(
             # Trend Analysis
             "trend_analysis": trends,
             "variable_growth_rates": variable_growth_rates,
-            # DCF Results
-            "dcf_valuation": dcf_result,
+            # DCF Results with IRR and NPV
+            "dcf_valuation": {
+                **dcf_result,
+                "irr": irr,
+                "npv": npv,
+                "terminal_value": terminal_value if 'terminal_value' in locals() else 0,
+                "projected_cash_flows": projected_cash_flows if 'projected_cash_flows' in locals() else [],
+            },
             "discount_rate": discount_rate,
             "terminal_growth_rate": perpetual_growth_rate,
             # Enhanced Metrics
@@ -730,6 +772,8 @@ def enhanced_DCF_with_trends(
                 "intrinsic_value": dcf_result.get("share_price", 0),
                 "enterprise_value": dcf_result.get("enterprise_value", 0),
                 "equity_value": dcf_result.get("equity_value", 0),
+                "irr": irr,  # Add IRR to enhanced metrics too
+                "npv": npv,  # Add NPV to enhanced metrics
             },
             # Raw Data
             "historical_data": historical_data,
@@ -742,6 +786,55 @@ def enhanced_DCF_with_trends(
             "error": str(e),
             "analysis_date": datetime.now().isoformat(),
         }
+
+
+def calculate_irr(initial_investment: float, cash_flows: List[float], terminal_value: float) -> float:
+    """Calculate Internal Rate of Return (IRR) using Newton-Raphson method"""
+    if initial_investment <= 0:
+        return 0
+    
+    # Combine cash flows with terminal value
+    all_cash_flows = [-initial_investment] + cash_flows[:-1] + [cash_flows[-1] + terminal_value]
+    
+    def npv(rate):
+        """Calculate NPV for given rate"""
+        return sum(cf / (1 + rate) ** i for i, cf in enumerate(all_cash_flows))
+    
+    def npv_derivative(rate):
+        """Calculate derivative of NPV for Newton-Raphson"""
+        return sum(-i * cf / (1 + rate) ** (i + 1) for i, cf in enumerate(all_cash_flows))
+    
+    # Newton-Raphson iteration
+    rate = 0.1  # Initial guess: 10%
+    tolerance = 1e-6
+    max_iterations = 100
+    
+    for _ in range(max_iterations):
+        try:
+            npv_value = npv(rate)
+            npv_deriv = npv_derivative(rate)
+            
+            if abs(npv_value) < tolerance:
+                break
+                
+            if abs(npv_deriv) < 1e-12:  # Avoid division by zero
+                break
+                
+            new_rate = rate - npv_value / npv_deriv
+            
+            # Apply bounds to prevent unrealistic rates
+            new_rate = max(-0.99, min(new_rate, 5.0))  # Between -99% and 500%
+            
+            if abs(new_rate - rate) < tolerance:
+                break
+                
+            rate = new_rate
+            
+        except (ZeroDivisionError, OverflowError):
+            break
+    
+    # Return reasonable IRR or 0 if calculation failed
+    return rate if -0.5 <= rate <= 2.0 else 0
 
 
 def _create_variable_growth_schedule(
