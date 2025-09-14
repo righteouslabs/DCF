@@ -2,6 +2,10 @@ import os
 import json
 import fmpsdk
 import requests
+import time
+import threading
+import fcntl
+import tempfile
 from typing import Dict, List, Optional, Any, Tuple
 from datetime import datetime, date
 from decimal import Decimal
@@ -12,11 +16,79 @@ from box import Box, BoxList
 load_dotenv()
 
 
+class FMPGlobalThrottle:
+    """Global throttle system using system mutex for FMP API rate limiting"""
+
+    _instance = None
+    _lock = threading.Lock()
+
+    def __new__(cls):
+        if cls._instance is None:
+            with cls._lock:
+                if cls._instance is None:
+                    cls._instance = super().__new__(cls)
+        return cls._instance
+
+    def __init__(self):
+        if not hasattr(self, 'initialized'):
+            # Get throttle rate from environment variable
+            self.requests_per_second = float(os.getenv('FMP_REQUESTS_PER_SECOND', '10'))
+            self.min_interval = 1.0 / self.requests_per_second
+
+            # Create a system-wide lock file for cross-process synchronization
+            self.lock_file_path = os.path.join(tempfile.gettempdir(), 'fmp_api_throttle.lock')
+            self.state_file_path = os.path.join(tempfile.gettempdir(), 'fmp_api_last_request.txt')
+
+            # Thread-local lock for same-process requests
+            self.thread_lock = threading.Lock()
+            self.initialized = True
+
+    def wait_if_needed(self):
+        """Wait if necessary to respect the global rate limit across all processes"""
+        with self.thread_lock:
+            try:
+                # Open lock file for exclusive access across processes
+                with open(self.lock_file_path, 'w') as lock_file:
+                    # Get exclusive lock (blocks other processes)
+                    fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+
+                    # Read last request time
+                    last_request_time = 0
+                    try:
+                        if os.path.exists(self.state_file_path):
+                            with open(self.state_file_path, 'r') as state_file:
+                                last_request_time = float(state_file.read().strip())
+                    except (FileNotFoundError, ValueError):
+                        last_request_time = 0
+
+                    # Calculate time since last request
+                    current_time = time.time()
+                    time_since_last = current_time - last_request_time
+
+                    # Wait if we need to throttle
+                    if time_since_last < self.min_interval:
+                        sleep_time = self.min_interval - time_since_last
+                        time.sleep(sleep_time)
+                        current_time = time.time()
+
+                    # Update last request time
+                    with open(self.state_file_path, 'w') as state_file:
+                        state_file.write(str(current_time))
+
+                    # Lock is automatically released when leaving the context
+
+            except Exception as e:
+                # Fallback to simple time-based throttling if file locking fails
+                print(f"Warning: FMP throttle file locking failed, using fallback: {e}")
+                time.sleep(self.min_interval)
+
+
 class FMPClient:
     """Enhanced client for Financial Modeling Prep API using fmpsdk"""
 
     def __init__(self, api_key: Optional[str] = None):
         self.api_key = api_key or self._get_api_key()
+        self.throttle = FMPGlobalThrottle()
 
     def _get_api_key(self) -> str:
         """Get FMP API key from environment"""
@@ -26,6 +98,11 @@ class FMPClient:
                 "FMP API key not found. Set FINANCIAL_MODELING_PREP_KEY or FMP_API_KEY environment variable"
             )
         return api_key
+
+    def _throttled_api_call(self, api_function, *args, **kwargs):
+        """Execute an API call with global throttling"""
+        self.throttle.wait_if_needed()
+        return api_function(*args, **kwargs)
 
     def _to_box(self, data: List[Dict[str, Any]]) -> BoxList:
         """Convert FMP response to Box objects for cleaner access"""
@@ -37,7 +114,8 @@ class FMPClient:
         self, ticker: str, period: str = "annual", limit: int = 10
     ) -> List[Dict[str, Any]]:
         """Get income statements for a ticker"""
-        return fmpsdk.income_statement(
+        return self._throttled_api_call(
+            fmpsdk.income_statement,
             apikey=self.api_key, symbol=ticker.upper(), period=period, limit=limit
         )
 
@@ -52,7 +130,8 @@ class FMPClient:
         self, ticker: str, period: str = "annual", limit: int = 10
     ) -> List[Dict[str, Any]]:
         """Get balance sheet statements for a ticker"""
-        return fmpsdk.balance_sheet_statement(
+        return self._throttled_api_call(
+            fmpsdk.balance_sheet_statement,
             apikey=self.api_key, symbol=ticker.upper(), period=period, limit=limit
         )
 
@@ -60,19 +139,24 @@ class FMPClient:
         self, ticker: str, period: str = "annual", limit: int = 10
     ) -> List[Dict[str, Any]]:
         """Get cash flow statements for a ticker"""
-        return fmpsdk.cash_flow_statement(
+        return self._throttled_api_call(
+            fmpsdk.cash_flow_statement,
             apikey=self.api_key, symbol=ticker.upper(), period=period, limit=limit
         )
 
     def get_company_profile(self, ticker: str) -> List[Dict[str, Any]]:
         """Get company profile information"""
-        return fmpsdk.company_profile(apikey=self.api_key, symbol=ticker.upper())
+        return self._throttled_api_call(
+            fmpsdk.company_profile,
+            apikey=self.api_key, symbol=ticker.upper()
+        )
 
     def get_key_metrics(
         self, ticker: str, period: str = "annual", limit: int = 10
     ) -> List[Dict[str, Any]]:
         """Get key financial metrics"""
-        return fmpsdk.key_metrics(
+        return self._throttled_api_call(
+            fmpsdk.key_metrics,
             apikey=self.api_key, symbol=ticker.upper(), period=period, limit=limit
         )
 
@@ -80,7 +164,8 @@ class FMPClient:
         self, ticker: str, period: str = "annual", limit: int = 10
     ) -> List[Dict[str, Any]]:
         """Get financial ratios"""
-        return fmpsdk.financial_ratios(
+        return self._throttled_api_call(
+            fmpsdk.financial_ratios,
             apikey=self.api_key, symbol=ticker.upper(), period=period, limit=limit
         )
 
@@ -88,19 +173,24 @@ class FMPClient:
         self, ticker: str, period: str = "annual", limit: int = 10
     ) -> List[Dict[str, Any]]:
         """Get enterprise values"""
-        return fmpsdk.enterprise_values(
+        return self._throttled_api_call(
+            fmpsdk.enterprise_values,
             apikey=self.api_key, symbol=ticker.upper(), period=period, limit=limit
         )
 
     def get_dcf_values(self, ticker: str) -> List[Dict[str, Any]]:
         """Get DCF valuation"""
-        return fmpsdk.discounted_cash_flow(apikey=self.api_key, symbol=ticker.upper())
+        return self._throttled_api_call(
+            fmpsdk.discounted_cash_flow,
+            apikey=self.api_key, symbol=ticker.upper()
+        )
 
     def get_financial_growth(
         self, ticker: str, period: str = "annual", limit: int = 10
     ) -> List[Dict[str, Any]]:
         """Get financial growth metrics"""
-        return fmpsdk.financial_growth(
+        return self._throttled_api_call(
+            fmpsdk.financial_growth,
             apikey=self.api_key, symbol=ticker.upper(), period=period, limit=limit
         )
 
@@ -108,7 +198,8 @@ class FMPClient:
         self, ticker: str, period: str = "annual", limit: int = 10
     ) -> List[Dict[str, Any]]:
         """Get income statement growth rates"""
-        return fmpsdk.income_statement_growth(
+        return self._throttled_api_call(
+            fmpsdk.income_statement_growth,
             apikey=self.api_key, symbol=ticker.upper(), period=period, limit=limit
         )
 
@@ -116,7 +207,8 @@ class FMPClient:
         self, ticker: str, period: str = "annual", limit: int = 10
     ) -> List[Dict[str, Any]]:
         """Get balance sheet growth rates"""
-        return fmpsdk.balance_sheet_statement_growth(
+        return self._throttled_api_call(
+            fmpsdk.balance_sheet_statement_growth,
             apikey=self.api_key, symbol=ticker.upper(), period=period, limit=limit
         )
 
@@ -124,17 +216,24 @@ class FMPClient:
         self, ticker: str, period: str = "annual", limit: int = 10
     ) -> List[Dict[str, Any]]:
         """Get cash flow growth rates"""
-        return fmpsdk.cash_flow_statement_growth(
+        return self._throttled_api_call(
+            fmpsdk.cash_flow_statement_growth,
             apikey=self.api_key, symbol=ticker.upper(), period=period, limit=limit
         )
 
     def get_quote(self, ticker: str) -> List[Dict[str, Any]]:
         """Get real-time quote"""
-        return fmpsdk.quote(apikey=self.api_key, symbol=ticker.upper())
+        return self._throttled_api_call(
+            fmpsdk.quote,
+            apikey=self.api_key, symbol=ticker.upper()
+        )
 
     def get_market_cap(self, ticker: str) -> List[Dict[str, Any]]:
         """Get market capitalization"""
-        return fmpsdk.market_capitalization(apikey=self.api_key, symbol=ticker.upper())
+        return self._throttled_api_call(
+            fmpsdk.market_capitalization,
+            apikey=self.api_key, symbol=ticker.upper()
+        )
 
     def get_sp500_constituents(self) -> List[Dict[str, Any]]:
         """Get list of S&P 500 constituents
@@ -151,6 +250,9 @@ class FMPClient:
             - founded: Year the company was founded
         """
         try:
+            # Apply throttling before making the request
+            self.throttle.wait_if_needed()
+
             url = f"https://financialmodelingprep.com/api/v3/sp500_constituent"
             params = {"apikey": self.api_key}
 
