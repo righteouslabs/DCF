@@ -603,30 +603,25 @@ def _create_fallback_trends(latest_metrics: pd.Series) -> Dict[str, Any]:
 def _apply_business_context_adjustments(
     trends: Dict[str, Any], latest: pd.Series
 ) -> Dict[str, Any]:
-    """Apply business context adjustments based on company size and industry characteristics"""
+    """Apply business context adjustments based on company size and industry characteristics.
+
+    NOTE: Historical CAGR values are NOT modified here - they should reflect actual history.
+    The maturity_factor and debt_constraint_factor are stored for use in forecast calculations
+    (see _create_variable_growth_schedule).
+    """
 
     # Size-based adjustments (larger companies typically have more stable, lower growth)
+    # These factors are used in forecasting, not to modify historical data
     revenue = latest.get("revenue", 0)
     if revenue > 100_000_000_000:  # >$100B revenue = mature large cap
-        trends["maturity_factor"] = 0.7  # Reduce growth expectations
+        trends["maturity_factor"] = 0.7  # Reduce growth expectations for forecasts
     elif revenue > 10_000_000_000:  # >$10B revenue = established company
         trends["maturity_factor"] = 0.85
     else:  # Smaller companies
         trends["maturity_factor"] = 1.0
 
-    # Apply maturity adjustments to growth rates
-    for growth_key in [
-        "revenue_cagr",
-        "ebitda_cagr",
-        "fcfe_cagr",
-        "recent_revenue_growth",
-        "recent_ebitda_growth",
-        "recent_fcfe_growth",
-    ]:
-        if growth_key in trends:
-            trends[growth_key] *= trends["maturity_factor"]
-
     # Debt level adjustments (high debt constrains growth)
+    # Used in forecasting, not to modify historical data
     debt_to_ebitda = latest.get("debt", 0) / max(latest.get("ebitda", 1), 1)
     if debt_to_ebitda > 4.0:  # High debt
         trends["debt_constraint_factor"] = 0.8
