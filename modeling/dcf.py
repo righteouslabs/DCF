@@ -22,27 +22,21 @@ from .data import (
 
 # Import configuration management
 try:
-    from config_manager import get_config
+    from .config_manager import get_config
 
     config = get_config()
     DCF_CONFIG = config.forecasting.dcf
-except ImportError:
-    # Fallback to default values if config not available
-    class DCFConfig:
-        default_discount_rate = 0.10
-        working_capital_decay_rate = 0.7
-        risk_free_rate = 0.04
-        market_premium = 0.06
-        default_earnings_growth_rate = 0.05
-        default_capex_growth_rate = 0.045
-        terminal_value_method = "gordon_growth"
-        max_terminal_growth_rate = 0.04
-        min_terminal_growth_rate = 0.02
-        tax_rate_floor = 0.15
-        tax_rate_ceiling = 0.35
-        beta_defaults = {"default": 1.0}
+except (ImportError, SystemError):
+    try:
+        from config_manager import get_config
 
-    DCF_CONFIG = DCFConfig()
+        config = get_config()
+        DCF_CONFIG = config.forecasting.dcf
+    except ImportError:
+        # Fallback to default values if config not available
+        from .config_manager import DCFConfig
+
+        DCF_CONFIG = DCFConfig()
 
 # Setup DCF module logger
 logger = logging.getLogger(__name__)
