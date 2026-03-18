@@ -21,22 +21,14 @@ from .data import (
 )
 
 # Import configuration management
-try:
-    from .config_manager import get_config
+from .config_manager import get_config, DCFConfig
 
+try:
     config = get_config()
     DCF_CONFIG = config.forecasting.dcf
-except (ImportError, SystemError):
-    try:
-        from config_manager import get_config
-
-        config = get_config()
-        DCF_CONFIG = config.forecasting.dcf
-    except ImportError:
-        # Fallback to default values if config not available
-        from .config_manager import DCFConfig
-
-        DCF_CONFIG = DCFConfig()
+except Exception:
+    # Fallback to default values if config loading fails
+    DCF_CONFIG = DCFConfig()
 
 # Setup DCF module logger
 logger = logging.getLogger(__name__)
